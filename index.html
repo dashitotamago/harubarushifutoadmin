@@ -282,7 +282,12 @@ async function renderGrid() {
 
   const rows = document.getElementById("gridRows");
   rows.innerHTML = `<div class="muted" style="padding:16px;">読み込み中...</div>`;
-  currentDayData = await apiCall(API_URL, "getDayData", { date }); // その日の希望・確定シフトだけを取得
+  try {
+    currentDayData = await apiCall(API_URL, "getDayData", { date }); // その日の希望・確定シフトだけを取得
+  } catch (e) {
+    rows.innerHTML = `<div class="error" style="padding:16px;">読み込みに失敗しました: ${e.message}</div>`;
+    return;
+  }
   rows.innerHTML = "";
 
   staffList.forEach((s) => {
@@ -372,22 +377,33 @@ async function saveFromModal() {
     err.classList.remove("hidden");
     return;
   }
-  await apiCall(API_URL, "saveAssigned", {
-    id: modalCtx.assignedId || undefined,
-    staffId: modalCtx.staffId,
-    date: modalCtx.date,
-    start, end, breakStart, breakEnd,
-  });
-  closeModal();
-  await renderGrid();
+  try {
+    await apiCall(API_URL, "saveAssigned", {
+      id: modalCtx.assignedId || undefined,
+      staffId: modalCtx.staffId,
+      date: modalCtx.date,
+      start, end, breakStart, breakEnd,
+    });
+    closeModal();
+    await renderGrid();
+  } catch (e) {
+    err.textContent = "通信エラー: " + e.message;
+    err.classList.remove("hidden");
+  }
 }
 
 async function deleteFromModal() {
-  if (modalCtx.assignedId) {
-    await apiCall(API_URL, "deleteAssigned", { id: modalCtx.assignedId });
+  const err = document.getElementById("modalError");
+  try {
+    if (modalCtx.assignedId) {
+      await apiCall(API_URL, "deleteAssigned", { id: modalCtx.assignedId });
+    }
+    closeModal();
+    await renderGrid();
+  } catch (e) {
+    err.textContent = "通信エラー: " + e.message;
+    err.classList.remove("hidden");
   }
-  closeModal();
-  await renderGrid();
 }
 
 /* ---- 設定 ---- */
