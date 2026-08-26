@@ -123,7 +123,7 @@
     </div>
 
     <!-- シフト編集モーダル -->
-    <div id="shiftModal" class="modal-overlay hidden">
+    <div id="shiftModal" class="modal-overlay hidden" style="display:none;">
       <div class="modal-box">
         <h3 id="shiftModalTitle">確定シフト</h3>
         <label>開始時刻</label>
@@ -348,11 +348,11 @@ function openShiftModal(staffId, staffName, date, assigned) {
   document.getElementById("modalBreakRow").classList.toggle("hidden", !hasBreak);
   document.getElementById("modalDeleteBtn").classList.toggle("hidden", !assigned);
   document.getElementById("modalError").classList.add("hidden");
-  document.getElementById("shiftModal").classList.remove("hidden");
+  document.getElementById("shiftModal").style.display = "flex";
 }
 
 function closeModal() {
-  document.getElementById("shiftModal").classList.add("hidden");
+  document.getElementById("shiftModal").style.display = "none";
   modalCtx = null;
 }
 
@@ -361,6 +361,7 @@ function toggleModalBreak() {
 }
 
 async function saveFromModal() {
+  if (!modalCtx) { closeModal(); return; }
   const start = document.getElementById("modalStart").value;
   const end = document.getElementById("modalEnd").value;
   const hasBreak = document.getElementById("modalHasBreak").checked;
@@ -394,6 +395,7 @@ async function saveFromModal() {
 }
 
 async function deleteFromModal() {
+  if (!modalCtx) { closeModal(); return; }
   const err = document.getElementById("modalError");
   try {
     if (modalCtx.assignedId) {
