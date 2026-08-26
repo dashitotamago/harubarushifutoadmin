@@ -69,6 +69,13 @@
   .modal-box h3 { margin-top:0; }
   .modal-actions { display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
   .modal-overlay.hidden { display:none; }
+
+  /* 2週間・1ヶ月テーブル */
+  #periodTable th, #periodTable td { text-align:center; white-space:nowrap; font-size:11px; padding:6px 8px; }
+  #periodTable th:first-child, #periodTable td:first-child { text-align:left; position:sticky; left:0; background:#fff; min-width:130px; }
+  #periodTable td.pcell.on { background:#f0fdfa; color:#0f766e; font-weight:600; }
+  #periodTable .pname { font-weight:700; color:#334155; font-size:12px; }
+  #periodTable .phours { font-size:10px; color:#0d9488; }
 </style>
 </head>
 <body>
@@ -98,27 +105,53 @@
 
     <!-- シフト管理 -->
     <div id="tab-grid">
-      <div class="navrow">
-        <button class="secondary small" onclick="gridChangeDay(-1)">←</button>
-        <div class="datebar">
-          <input id="gridDate" type="date" onchange="renderGrid()" />
-        </div>
-        <button class="secondary small" onclick="gridChangeDay(1)">→</button>
-        <button class="secondary small" onclick="gridToday()">今日</button>
+      <div class="tabs" style="margin-bottom:12px;">
+        <div class="tab active" data-view="day" onclick="switchGridView('day')">日別</div>
+        <div class="tab" data-view="2week" onclick="switchGridView('2week')">2週間</div>
+        <div class="tab" data-view="month" onclick="switchGridView('month')">1ヶ月</div>
       </div>
-      <div class="card gridwrap">
-        <div class="gridinner">
-          <div class="ghead">
-            <div class="gnamecol">スタッフ</div>
-            <div class="ghours" id="ghours"></div>
+
+      <!-- 日別表示 -->
+      <div id="dayView">
+        <div class="navrow">
+          <button class="secondary small" onclick="gridChangeDay(-1)">←</button>
+          <div class="datebar">
+            <input id="gridDate" type="date" onchange="renderGrid()" />
           </div>
-          <div id="gridRows"></div>
+          <button class="secondary small" onclick="gridChangeDay(1)">→</button>
+          <button class="secondary small" onclick="gridToday()">今日</button>
+        </div>
+        <div class="card gridwrap">
+          <div class="gridinner">
+            <div class="ghead">
+              <div class="gnamecol">スタッフ</div>
+              <div class="ghours" id="ghours"></div>
+            </div>
+            <div id="gridRows"></div>
+          </div>
+        </div>
+        <div class="glegend">
+          <span><span class="sw" style="background:#cbd5e1"></span>希望シフト</span>
+          <span><span class="sw" style="background:#99f6e4; border:1px solid #14b8a6"></span>確定シフト</span>
+          <span>帯の空いている場所をクリックで確定シフト追加、緑の帯をクリックで編集・削除</span>
         </div>
       </div>
-      <div class="glegend">
-        <span><span class="sw" style="background:#cbd5e1"></span>希望シフト</span>
-        <span><span class="sw" style="background:#99f6e4; border:1px solid #14b8a6"></span>確定シフト</span>
-        <span>帯の空いている場所をクリックで確定シフト追加、緑の帯をクリックで編集・削除</span>
+
+      <!-- 2週間・1ヶ月表示 -->
+      <div id="periodView" class="hidden">
+        <div class="navrow">
+          <button class="secondary small" onclick="periodChange(-1)">←</button>
+          <div id="periodLabel" style="font-weight:600; font-size:14px;"></div>
+          <button class="secondary small" onclick="periodChange(1)">→</button>
+          <button class="secondary small" onclick="periodToday()">今日</button>
+        </div>
+        <div class="card gridwrap">
+          <table id="periodTable" style="min-width:max-content;">
+            <thead><tr id="periodHeadRow"></tr></thead>
+            <tbody id="periodBody"></tbody>
+          </table>
+        </div>
+        <p class="muted">スタッフ名の横の時間は、この期間の確定シフト合計時間(休憩を除く)です。セルは各日の確定シフトの時間帯です。</p>
       </div>
     </div>
 
@@ -237,12 +270,15 @@ function logout() {
 }
 
 function switchTab(key) {
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === key));
+  document.querySelectorAll(".tab[data-tab]").forEach((t) => t.classList.toggle("active", t.dataset.tab === key));
   ["grid", "settings"].forEach((k) => {
     document.getElementById("tab-" + k).classList.toggle("hidden", k !== key);
   });
   // タブを開いたときだけ、そのタブに必要なデータを取りに行く(他タブ分は読み込まない)
-  if (key === "grid") renderGrid();
+  if (key === "grid") {
+    if (gridViewMode === "day") renderGrid();
+    else renderPeriod();
+  }
 }
 
 /* ---- シフト管理(横棒グリッド表示) ---- */
@@ -271,6 +307,12 @@ function gridPos(start, end) {
   return { left, width };
 }
 
+// 確定シフト1件分の実働時間(休憩を除く/時間単位)
+function calcHours(a) {
+  const breakMin = (a.breakStart && a.breakEnd) ? Math.max(0, toMin(a.breakEnd) - toMin(a.breakStart)) : 0;
+  return Math.max(0, toMin(a.end) - toMin(a.start) - breakMin) / 60;
+}
+
 let currentDayData = { shifts: [], assigned: [] };
 
 async function renderGrid() {
@@ -293,7 +335,10 @@ async function renderGrid() {
 
   staffList.forEach((s) => {
     const req = currentDayData.shifts.find((sh) => sh.staffId === s.id);
-    const asg = currentDayData.assigned.find((a) => a.staffId === s.id);
+    // 万一同じスタッフ・同じ日に複数件残っていても、一番後ろ(最新)のものを優先して表示する
+    const myAssigned = currentDayData.assigned.filter((a) => a.staffId === s.id);
+    const asg = myAssigned.length ? myAssigned[myAssigned.length - 1] : null;
+    const dayHours = myAssigned.reduce((sum, a) => sum + calcHours(a), 0);
 
     const row = document.createElement("div");
     row.className = "growrap";
@@ -309,7 +354,7 @@ async function renderGrid() {
     })() : "";
 
     row.innerHTML = `
-      <div class="gname"><div class="n">${s.name}</div><div class="w">${req ? (req.isDayOff ? "休み希望" : "希望あり") : "希望なし"}</div></div>
+      <div class="gname"><div class="n">${s.name}${dayHours > 0 ? ` <span class="phours">(${dayHours.toFixed(1)}h)</span>` : ""}</div><div class="w">${req ? (req.isDayOff ? "休み希望" : "希望あり") : "希望なし"}</div></div>
       <div class="gtrack" onclick="trackClicked(event, '${s.id}', '${s.name.replace(/'/g, "\\'")}', '${date}')">
         <div class="glines">${GRID_HOURS.map(() => '<div class="gline"></div>').join("")}</div>
         <div class="greq">${reqBarHtml}</div>
@@ -321,6 +366,102 @@ async function renderGrid() {
 
   if (staffList.length === 0) {
     rows.innerHTML = `<div class="muted" style="padding:16px;">「スタッフ管理」からスタッフを登録してください</div>`;
+  }
+}
+
+/* ---- 2週間・1ヶ月表示 ---- */
+let gridViewMode = "day"; // day | 2week | month
+let periodAnchor = todayStr();
+
+function switchGridView(mode) {
+  gridViewMode = mode;
+  document.querySelectorAll('.tabs .tab[data-view]').forEach((t) => t.classList.toggle("active", t.dataset.view === mode));
+  document.getElementById("dayView").classList.toggle("hidden", mode !== "day");
+  document.getElementById("periodView").classList.toggle("hidden", mode === "day");
+  if (mode === "day") {
+    renderGrid();
+  } else {
+    renderPeriod();
+  }
+}
+
+function mondayOnOrBefore(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const wd = d.getDay(); // 0=日
+  const diff = wd === 0 ? 6 : wd - 1;
+  return addDays(dateStr, -diff);
+}
+
+function periodDates() {
+  if (gridViewMode === "2week") {
+    const start = mondayOnOrBefore(periodAnchor);
+    return Array.from({ length: 14 }, (_, i) => addDays(start, i));
+  }
+  // month
+  const d = new Date(periodAnchor + "T00:00:00");
+  const y = d.getFullYear(), m = d.getMonth() + 1;
+  const last = new Date(y, m, 0).getDate();
+  return Array.from({ length: last }, (_, i) => `${y}-${String(m).padStart(2,"0")}-${String(i+1).padStart(2,"0")}`);
+}
+
+function periodChange(n) {
+  if (gridViewMode === "2week") {
+    periodAnchor = addDays(periodAnchor, n * 14);
+  } else {
+    const d = new Date(periodAnchor + "T00:00:00");
+    d.setMonth(d.getMonth() + n);
+    periodAnchor = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-01`;
+  }
+  renderPeriod();
+}
+
+function periodToday() {
+  periodAnchor = todayStr();
+  renderPeriod();
+}
+
+async function renderPeriod() {
+  const dates = periodDates();
+  const label = gridViewMode === "2week"
+    ? `${dates[0]} 〜 ${dates[13]}`
+    : `${dates[0].slice(0,7)}`;
+  document.getElementById("periodLabel").textContent = label;
+
+  const headRow = document.getElementById("periodHeadRow");
+  headRow.innerHTML = `<th>スタッフ</th>` + dates.map((d) => {
+    const wd = new Date(d + "T00:00:00").getDay();
+    const short = `${Number(d.slice(5,7))}/${Number(d.slice(8,10))}`;
+    return `<th>${short}</th>`;
+  }).join("");
+
+  const body = document.getElementById("periodBody");
+  body.innerHTML = `<tr><td colspan="${dates.length+1}" class="muted" style="padding:12px;">読み込み中...</td></tr>`;
+
+  let periodData;
+  try {
+    periodData = await apiCall(API_URL, "getPeriodData", { startDate: dates[0], endDate: dates[dates.length-1] });
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="${dates.length+1}" class="error" style="padding:12px;">読み込みに失敗しました: ${e.message}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = "";
+  staffList.forEach((s) => {
+    const mine = periodData.assigned.filter((a) => a.staffId === s.id);
+    const totalHours = mine.reduce((sum, a) => sum + calcHours(a), 0);
+    const byDate = {};
+    mine.forEach((a) => { byDate[a.date] = a; }); // 同日重複が残っていても最後の1件を優先
+    const tr = document.createElement("tr");
+    const nameCell = `<td><div class="pname">${s.name}</div><div class="phours">${totalHours.toFixed(1)}時間</div></td>`;
+    const cells = dates.map((d) => {
+      const a = byDate[d];
+      return a ? `<td class="pcell on">${a.start}-${a.end}</td>` : `<td class="pcell"></td>`;
+    }).join("");
+    tr.innerHTML = nameCell + cells;
+    body.appendChild(tr);
+  });
+  if (staffList.length === 0) {
+    body.innerHTML = `<tr><td colspan="${dates.length+1}" class="muted" style="padding:12px;">「スタッフ管理」からスタッフを登録してください</td></tr>`;
   }
 }
 
