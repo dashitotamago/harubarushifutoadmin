@@ -287,7 +287,7 @@ function switchTab(key) {
 }
 
 /* ---- シフト管理(横棒グリッド表示) ---- */
-const GRID_START_HOUR = 9;
+const GRID_START_HOUR = 5; // 早朝の仕込みシフトなどにも対応できるよう5時開始に拡大
 const GRID_END_HOUR = 24;
 const GRID_HOURS = Array.from({ length: GRID_END_HOUR - GRID_START_HOUR }, (_, i) => GRID_START_HOUR + i);
 const GRID_RANGE_MIN = (GRID_END_HOUR - GRID_START_HOUR) * 60;
@@ -307,8 +307,12 @@ function gridClampMin(min) {
   return Math.max(GRID_START_HOUR * 60, Math.min(GRID_END_HOUR * 60, min));
 }
 function gridPos(start, end) {
-  const left = ((gridClampMin(toMin(start)) - GRID_START_HOUR * 60) / GRID_RANGE_MIN) * 100;
-  const width = ((gridClampMin(toMin(end)) - gridClampMin(toMin(start))) / GRID_RANGE_MIN) * 100;
+  let s = toMin(start);
+  let e = toMin(end);
+  if (e <= s) e += 24 * 60; // 終了時刻が開始より前(=日をまたぐ)場合は翌日として扱う
+  const left = ((gridClampMin(s) - GRID_START_HOUR * 60) / GRID_RANGE_MIN) * 100;
+  let width = ((gridClampMin(e) - gridClampMin(s)) / GRID_RANGE_MIN) * 100;
+  if (width > 0 && width < 1.5) width = 1.5; // 表示範囲の端に近い短い帯でも見えなくならないよう最低限の幅を確保
   return { left, width };
 }
 
