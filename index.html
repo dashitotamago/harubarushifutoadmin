@@ -52,14 +52,19 @@
   .gtrack { position:relative; flex:1; padding:8px 0; cursor:pointer; }
   .glines { position:absolute; inset:0; display:flex; pointer-events:none; }
   .gline { flex:1; border-left:1px solid #f8fafc; }
-  .greq { position:relative; height:6px; margin-bottom:3px; }
-  .greqbar { position:absolute; top:0; height:6px; background:#cbd5e1; border-radius:3px; }
-  .gasn { position:relative; height:26px; }
+  .gasn { position:relative; height:28px; margin-bottom:3px; }
   .gasnbar {
-    position:absolute; top:0; height:26px; background:#99f6e4; border:1px solid #14b8a6; border-radius:6px;
-    font-size:10px; color:#0f766e; line-height:24px; padding:0 6px; overflow:hidden; white-space:nowrap; cursor:pointer;
+    position:absolute; top:0; height:28px; background:#dcfce7; border:1px solid #4ade80; border-radius:4px;
+    font-size:11px; font-weight:700; color:#166534; line-height:26px; padding:0 6px; overflow:hidden; white-space:nowrap; cursor:pointer;
   }
-  .gasnbar:hover { background:#5eead4; }
+  .gasnbar:hover { background:#bbf7d0; }
+  .gasnbreak { position:absolute; top:0; height:28px; background:rgba(255,255,255,.65); border-left:1px dashed #4ade80; border-right:1px dashed #4ade80; pointer-events:none; }
+  .greq { position:relative; height:22px; }
+  .greqbar {
+    position:absolute; top:0; height:22px; background:transparent; border-top:1px solid #cbd5e1;
+    font-size:10px; color:#64748b; line-height:12px; padding-top:2px; overflow:hidden; white-space:nowrap;
+  }
+  .greqbar .memo { font-size:9px; color:#94a3b8; white-space:normal; }
   .glegend { display:flex; gap:14px; font-size:11px; color:#94a3b8; margin-top:8px; flex-wrap:wrap; align-items:center; }
   .glegend .sw { display:inline-block; width:16px; height:8px; border-radius:3px; vertical-align:middle; margin-right:4px; }
 
@@ -107,7 +112,7 @@
     <div id="tab-grid">
       <div class="tabs" style="margin-bottom:12px;">
         <div class="tab active" data-view="day" onclick="switchGridView('day')">日別</div>
-        <div class="tab" data-view="2week" onclick="switchGridView('2week')">2週間</div>
+        <div class="tab" data-view="2week" onclick="switchGridView('2week')">前半・後半</div>
         <div class="tab" data-view="month" onclick="switchGridView('month')">1ヶ月</div>
       </div>
 
@@ -131,8 +136,8 @@
           </div>
         </div>
         <div class="glegend">
-          <span><span class="sw" style="background:#cbd5e1"></span>希望シフト</span>
-          <span><span class="sw" style="background:#99f6e4; border:1px solid #14b8a6"></span>確定シフト</span>
+          <span><span class="sw" style="background:#dcfce7; border:1px solid #4ade80"></span>確定シフト(白い切れ目=休憩)</span>
+          <span><span class="sw" style="background:transparent; border-top:1px solid #cbd5e1"></span>希望シフト</span>
           <span>帯の空いている場所をクリックで確定シフト追加、緑の帯をクリックで編集・削除</span>
         </div>
       </div>
@@ -345,20 +350,28 @@ async function renderGrid() {
 
     const reqBarHtml = (req && !req.isDayOff && req.start && req.end) ? (() => {
       const p = gridPos(req.start, req.end);
-      return `<div class="greqbar" style="left:${p.left}%; width:${p.width}%" title="希望シフト ${req.start}〜${req.end}"></div>`;
+      return `<div class="greqbar" style="left:${p.left}%; width:${p.width}%">${req.start}-${req.end}${req.memo ? `<div class="memo">${req.memo}</div>` : ""}</div>`;
     })() : "";
 
     const asnBarHtml = asg ? (() => {
       const p = gridPos(asg.start, asg.end);
-      return `<div class="gasnbar" style="left:${p.left}%; width:${p.width}%" data-assigned-id="${asg.id}" onclick="event.stopPropagation(); openShiftModalById('${s.id}','${s.name.replace(/'/g, "\\'")}','${date}','${asg.id}')">${asg.start}-${asg.end}</div>`;
+      const hasBreak = asg.breakStart && asg.breakEnd;
+      const breakHtml = hasBreak ? (() => {
+        const bp = gridPos(asg.breakStart, asg.breakEnd);
+        // 休憩の位置は「バー全体に対する相対%」に変換して重ねる
+        const relLeft = p.width > 0 ? ((bp.left - p.left) / p.width) * 100 : 0;
+        const relWidth = p.width > 0 ? (bp.width / p.width) * 100 : 0;
+        return `<div class="gasnbreak" style="left:${relLeft}%; width:${relWidth}%" title="休憩 ${asg.breakStart}〜${asg.breakEnd}"></div>`;
+      })() : "";
+      return `<div class="gasnbar" style="left:${p.left}%; width:${p.width}%" data-assigned-id="${asg.id}" onclick="event.stopPropagation(); openShiftModalById('${s.id}','${s.name.replace(/'/g, "\\'")}','${date}','${asg.id}')">${asg.start}-${asg.end}${breakHtml}</div>`;
     })() : "";
 
     row.innerHTML = `
       <div class="gname"><div class="n">${s.name}${dayHours > 0 ? ` <span class="phours">(${dayHours.toFixed(1)}h)</span>` : ""}</div><div class="w">${req ? (req.isDayOff ? "休み希望" : "希望あり") : "希望なし"}</div></div>
       <div class="gtrack" onclick="trackClicked(event, '${s.id}', '${s.name.replace(/'/g, "\\'")}', '${date}')">
         <div class="glines">${GRID_HOURS.map(() => '<div class="gline"></div>').join("")}</div>
-        <div class="greq">${reqBarHtml}</div>
         <div class="gasn">${asnBarHtml}</div>
+        <div class="greq">${reqBarHtml}</div>
       </div>
     `;
     rows.appendChild(row);
@@ -385,32 +398,52 @@ function switchGridView(mode) {
   }
 }
 
-function mondayOnOrBefore(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  const wd = d.getDay(); // 0=日
-  const diff = wd === 0 ? 6 : wd - 1;
-  return addDays(dateStr, -diff);
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+// 1〜15日、16日〜月末で区切った期間の日付一覧を返す
+function halfPeriodDates(anchorDate) {
+  const d = new Date(anchorDate + "T00:00:00");
+  const y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate();
+  if (day <= 15) {
+    return Array.from({ length: 15 }, (_, i) => `${y}-${pad2(m)}-${pad2(i + 1)}`);
+  }
+  const last = new Date(y, m, 0).getDate();
+  return Array.from({ length: last - 15 }, (_, i) => `${y}-${pad2(m)}-${pad2(16 + i)}`);
+}
+
+// 半月区切りで前/次の期間の基準日を返す(dir: -1で前、1で次)
+function shiftHalfPeriod(anchorDate, dir) {
+  const d = new Date(anchorDate + "T00:00:00");
+  const y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate();
+  const isFirstHalf = day <= 15;
+  if (dir > 0) {
+    if (isFirstHalf) return `${y}-${pad2(m)}-16`;
+    const nd = new Date(y, m, 1); // 翌月1日(mはJSの0始まりに対して+1されているため、そのままnew Dateへ渡すと翌月になる)
+    return `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
+  }
+  if (!isFirstHalf) return `${y}-${pad2(m)}-01`;
+  const pd = new Date(y, m - 2, 16); // 前月16日
+  return `${pd.getFullYear()}-${pad2(pd.getMonth() + 1)}-16`;
 }
 
 function periodDates() {
   if (gridViewMode === "2week") {
-    const start = mondayOnOrBefore(periodAnchor);
-    return Array.from({ length: 14 }, (_, i) => addDays(start, i));
+    return halfPeriodDates(periodAnchor);
   }
   // month
   const d = new Date(periodAnchor + "T00:00:00");
   const y = d.getFullYear(), m = d.getMonth() + 1;
   const last = new Date(y, m, 0).getDate();
-  return Array.from({ length: last }, (_, i) => `${y}-${String(m).padStart(2,"0")}-${String(i+1).padStart(2,"0")}`);
+  return Array.from({ length: last }, (_, i) => `${y}-${pad2(m)}-${pad2(i + 1)}`);
 }
 
 function periodChange(n) {
   if (gridViewMode === "2week") {
-    periodAnchor = addDays(periodAnchor, n * 14);
+    periodAnchor = shiftHalfPeriod(periodAnchor, n);
   } else {
     const d = new Date(periodAnchor + "T00:00:00");
     d.setMonth(d.getMonth() + n);
-    periodAnchor = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-01`;
+    periodAnchor = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-01`;
   }
   renderPeriod();
 }
@@ -422,9 +455,15 @@ function periodToday() {
 
 async function renderPeriod() {
   const dates = periodDates();
-  const label = gridViewMode === "2week"
-    ? `${dates[0]} 〜 ${dates[13]}`
-    : `${dates[0].slice(0,7)}`;
+  let label;
+  if (gridViewMode === "2week") {
+    const y = Number(dates[0].slice(0, 4));
+    const m = Number(dates[0].slice(5, 7));
+    const isFirstHalf = Number(dates[0].slice(8, 10)) === 1;
+    label = `${y}年${m}月${isFirstHalf ? "前半(1〜15日)" : "後半(16〜" + dates[dates.length - 1].slice(8,10) + "日)"}`;
+  } else {
+    label = `${dates[0].slice(0,7)}`;
+  }
   document.getElementById("periodLabel").textContent = label;
 
   const headRow = document.getElementById("periodHeadRow");
