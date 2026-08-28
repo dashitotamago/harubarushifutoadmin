@@ -157,6 +157,13 @@
           <button class="secondary small" onclick="gridToday()">今日</button>
           <button onclick="confirmDayShifts()">この日のシフトを確定</button>
         </div>
+        <div class="navrow" style="justify-content:space-between;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <label style="margin:0; font-size:12px;">この日のモード:</label>
+            <select id="dayModeSelect" onchange="onDayModeChange()" style="width:auto; margin:0;"></select>
+          </div>
+          <div id="dayLaborCost" style="font-size:13px; font-weight:700; color:#334155;"></div>
+        </div>
         <div id="dayConfirmMsg" class="hint hidden"></div>
         <div class="card gridwrap">
           <div class="gridinner">
@@ -197,6 +204,9 @@
           <button class="secondary small" onclick="periodChange(1)">→</button>
           <button class="secondary small" onclick="periodToday()">今日</button>
           <button onclick="confirmPeriodShifts()">この期間のシフトを確定</button>
+        </div>
+        <div class="navrow" style="justify-content:flex-end;">
+          <div id="periodLaborCost" style="font-size:13px; font-weight:700; color:#334155;"></div>
         </div>
         <div id="periodConfirmMsg" class="hint hidden"></div>
         <div class="card gridwrap">
@@ -266,14 +276,27 @@
         <div id="positionList" style="margin-top:10px;"></div>
       </div>
       <div class="card">
+        <h3>祝日カレンダー</h3>
+        <p class="muted">登録した日は、平日でも「土日祝」の理論シフトが自動的に適用されます。</p>
+        <div class="row">
+          <div style="flex:1"><input id="newHolidayDate" type="date" /></div>
+          <button onclick="addHoliday()" style="width:auto;">追加</button>
+        </div>
+        <div id="holidayList" style="margin-top:8px;"></div>
+      </div>
+      <div class="card">
         <h3>理論シフト(時間別必要人数)</h3>
-        <p class="muted">1時間ごとの必要人数を、平日・土日祝それぞれで設定します(祝日カレンダーには対応していないため、土曜・日曜を「土日祝」として扱います)。</p>
-        <div class="tabs" style="margin-bottom:10px;">
-          <div class="tab active" data-reqday="weekday" onclick="switchRequiredDay('weekday')">平日</div>
-          <div class="tab" data-reqday="weekend" onclick="switchRequiredDay('weekend')">土日祝</div>
+        <p class="muted">「平日」「土日祝」は標準のモードです。繁忙期など、独自のモードを追加してシフト管理画面の日別表示から日ごとに切り替えられます。</p>
+        <div class="tabs" id="modeTabs" style="margin-bottom:10px; flex-wrap:wrap;"></div>
+        <div class="row" style="margin-bottom:10px;">
+          <div style="flex:1"><input id="newModeName" placeholder="新しいモード名(例: 繁忙期)" /></div>
+          <button onclick="addStaffingMode()" style="width:auto;">追加</button>
         </div>
         <div id="requiredGrid"></div>
-        <button onclick="saveRequiredStaffing()" style="margin-top:10px;">この内容で保存する</button>
+        <div class="row" style="margin-top:10px;">
+          <button onclick="saveRequiredStaffing()">この内容で保存する</button>
+          <button class="danger" id="deleteModeBtn" onclick="deleteCurrentMode()" style="width:auto; display:none;">このモードを削除</button>
+        </div>
       </div>
       <div class="card">
         <h3>シフト提出期限の解除</h3>
@@ -343,6 +366,7 @@ async function doAdminLogin() {
     staffList = await apiCall(API_URL, "getStaffList"); // ログイン後に1回だけ取得し、以後は使い回す
     positionList = await apiCall(API_URL, "getPositions");
     await loadRequiredStaffing();
+    await loadHolidays();
     document.getElementById("loginView").classList.add("hidden");
     document.getElementById("mainView").classList.remove("hidden");
     document.getElementById("gridDate").value = gridDateVal;
@@ -369,7 +393,7 @@ function switchTab(key) {
     if (gridViewMode === "day") renderGrid();
     else renderPeriod();
   }
-  if (key === "settings") { renderDeadlines(); renderPositionList(); loadRequiredStaffing(); }
+  if (key === "settings") { renderDeadlines(); renderPositionList(); loadRequiredStaffing(); renderHolidayList(); }
 }
 
 /* ---- シフト管理(横棒グリッド表示) ---- */
@@ -444,7 +468,9 @@ async function renderGrid() {
     rows.innerHTML = `<div class="error" style="padding:16px;">読み込みに失敗しました: ${e.message}</div>`;
     return;
   }
-  renderStaffingRows(date, currentDayData.assigned);
+  renderStaffingRows(currentDayData.requiredMode, currentDayData.assigned);
+  renderDayModeSelect(date, currentDayData.requiredMode);
+  document.getElementById("dayLaborCost").textContent = "人件費(概算): " + yen(calcLaborCost(currentDayData.assigned));
   rows.innerHTML = "";
 
   staffList.forEach((s) => {
@@ -617,6 +643,7 @@ async function renderPeriod() {
     body.innerHTML = `<tr><td colspan="${dates.length+1}" class="error" style="padding:12px;">読み込みに失敗しました: ${e.message}</td></tr>`;
     return;
   }
+  document.getElementById("periodLaborCost").textContent = "人件費(概算): " + yen(calcLaborCost(periodData.assigned));
 
   body.innerHTML = "";
   staffList.forEach((s) => {
@@ -630,7 +657,17 @@ async function renderPeriod() {
       const a = byDate[d];
       if (!a) return `<td class="pcell"></td>`;
       const isPublished = a.published === true || a.published === "TRUE" || a.published === "true";
-      return `<td class="pcell on${isPublished ? "" : " draft"}" title="${isPublished ? "確定済み" : "未確定"}">${a.start}-${a.end}</td>`;
+      const statusTitle = isPublished ? "確定済み" : "未確定";
+      if (a.segments && a.segments.length > 0) {
+        const colors = a.segments.map((seg) => {
+          const pos = positionList.find((x) => x.id === seg.positionId);
+          return pos ? pos.color : "#cbd5e1";
+        });
+        const stepPct = 100 / colors.length;
+        const gradient = colors.map((c, i) => `${c} ${(i*stepPct).toFixed(0)}%, ${c} ${((i+1)*stepPct).toFixed(0)}%`).join(", ");
+        return `<td class="pcell on${isPublished ? "" : " draft"}" style="background:linear-gradient(90deg, ${gradient});" title="${statusTitle}">${a.start}-${a.end}</td>`;
+      }
+      return `<td class="pcell on${isPublished ? "" : " draft"}" title="${statusTitle}">${a.start}-${a.end}</td>`;
     }).join("");
     tr.innerHTML = nameCell + cells;
     body.appendChild(tr);
@@ -858,36 +895,88 @@ async function changePasscode() {
   alert("変更しました");
 }
 
-/* ---- 理論シフト(時間別必要人数) ---- */
-let requiredDayType = "weekday"; // weekday | weekend
-let requiredStaffing = { weekday: {}, weekend: {} };
+/* ---- 祝日カレンダー ---- */
+let holidayList = [];
 
-function switchRequiredDay(type) {
-  requiredDayType = type;
-  document.querySelectorAll('.tab[data-reqday]').forEach((t) => t.classList.toggle("active", t.dataset.reqday === type));
-  renderRequiredGrid();
+async function loadHolidays() {
+  try {
+    holidayList = await apiCall(API_URL, "getHolidays");
+  } catch (e) {
+    holidayList = [];
+  }
+  renderHolidayList();
 }
+
+function renderHolidayList() {
+  const el = document.getElementById("holidayList");
+  if (holidayList.length === 0) {
+    el.innerHTML = `<p class="muted">まだ登録されていません。</p>`;
+    return;
+  }
+  el.innerHTML = holidayList.map((d) => `
+    <div class="positionitem">
+      <div class="pname">${d}</div>
+      <button class="danger small" onclick="deleteHoliday('${d}')">削除</button>
+    </div>
+  `).join("");
+}
+
+async function addHoliday() {
+  const date = document.getElementById("newHolidayDate").value;
+  if (!date) { alert("日付を選んでください"); return; }
+  await apiCall(API_URL, "addHoliday", { date });
+  document.getElementById("newHolidayDate").value = "";
+  await loadHolidays();
+  if (gridViewMode === "day") renderGrid();
+}
+
+async function deleteHoliday(date) {
+  await apiCall(API_URL, "deleteHoliday", { date });
+  await loadHolidays();
+  if (gridViewMode === "day") renderGrid();
+}
+
+/* ---- 理論シフト(時間別必要人数、複数モード対応) ---- */
+let staffingModesCache = []; // [{id, name, hours, builtin}]
+let currentEditModeId = "weekday";
 
 async function loadRequiredStaffing() {
   try {
-    const settings = await apiCall(API_URL, "getSettings");
-    requiredStaffing.weekday = settings.requiredStaffing_weekday ? JSON.parse(settings.requiredStaffing_weekday) : {};
-    requiredStaffing.weekend = settings.requiredStaffing_weekend ? JSON.parse(settings.requiredStaffing_weekend) : {};
+    staffingModesCache = await apiCall(API_URL, "getStaffingModes");
   } catch (e) {
-    requiredStaffing = { weekday: {}, weekend: {} };
+    staffingModesCache = [];
   }
+  if (!staffingModesCache.find((m) => m.id === currentEditModeId)) {
+    currentEditModeId = staffingModesCache[0] ? staffingModesCache[0].id : "weekday";
+  }
+  renderModeTabs();
+  renderRequiredGrid();
+}
+
+function renderModeTabs() {
+  const el = document.getElementById("modeTabs");
+  el.innerHTML = staffingModesCache.map((m) => `
+    <div class="tab ${m.id === currentEditModeId ? "active" : ""}" onclick="switchEditMode('${m.id}')">${m.name}</div>
+  `).join("");
+}
+
+function switchEditMode(modeId) {
+  currentEditModeId = modeId;
+  renderModeTabs();
   renderRequiredGrid();
 }
 
 function renderRequiredGrid() {
+  const mode = staffingModesCache.find((m) => m.id === currentEditModeId);
+  const current = mode ? mode.hours : {};
   const el = document.getElementById("requiredGrid");
-  const current = requiredStaffing[requiredDayType] || {};
   el.innerHTML = `<div class="reqgrid">` + GRID_HOURS.map((h) => `
     <div class="reqcell">
       <label>${h}時</label>
       <input type="number" min="0" class="req-hour" data-hour="${h}" value="${current[h] !== undefined ? current[h] : 0}">
     </div>
   `).join("") + `</div>`;
+  document.getElementById("deleteModeBtn").style.display = (mode && !mode.builtin) ? "inline-block" : "none";
 }
 
 async function saveRequiredStaffing() {
@@ -895,16 +984,32 @@ async function saveRequiredStaffing() {
   document.querySelectorAll(".req-hour").forEach((inp) => {
     map[inp.dataset.hour] = Number(inp.value) || 0;
   });
-  requiredStaffing[requiredDayType] = map;
-  await apiCall(API_URL, "setSetting", { key: "requiredStaffing_" + requiredDayType, value: JSON.stringify(map) });
+  await apiCall(API_URL, "updateStaffingModeHours", { id: currentEditModeId, hours: map });
+  const mode = staffingModesCache.find((m) => m.id === currentEditModeId);
+  if (mode) mode.hours = map;
   alert("保存しました");
   if (gridViewMode === "day") renderGrid();
 }
 
-// 表示中の日付が平日か土日祝(土日として判定)かを返す
-function requiredDayTypeForDate(dateStr) {
-  const wd = new Date(dateStr + "T00:00:00").getDay();
-  return (wd === 0 || wd === 6) ? "weekend" : "weekday";
+async function addStaffingMode() {
+  const name = document.getElementById("newModeName").value.trim();
+  if (!name) { alert("モード名を入力してください"); return; }
+  const mode = await apiCall(API_URL, "addStaffingMode", { name });
+  document.getElementById("newModeName").value = "";
+  staffingModesCache.push({ id: mode.id, name: mode.name, hours: {}, builtin: false });
+  currentEditModeId = mode.id;
+  renderModeTabs();
+  renderRequiredGrid();
+}
+
+async function deleteCurrentMode() {
+  if (!confirm("このモードを削除しますか?(このモードを使っている日付は自動判定に戻ります)")) return;
+  const result = await apiCall(API_URL, "deleteStaffingMode", { id: currentEditModeId });
+  if (!result.ok) { alert("削除できませんでした"); return; }
+  staffingModesCache = staffingModesCache.filter((m) => m.id !== currentEditModeId);
+  currentEditModeId = "weekday";
+  renderModeTabs();
+  renderRequiredGrid();
 }
 
 // その日の各時間帯の実際の人数を、確定シフトの開始〜終了から集計する
@@ -923,9 +1028,9 @@ function computeHourlyActualCounts(assignedList) {
   return counts;
 }
 
-function renderStaffingRows(date, assignedList) {
-  const dayType = requiredDayTypeForDate(date);
-  const required = requiredStaffing[dayType] || {};
+// getDayDataが返す requiredMode(その日に実際に適用されているモード)を使って表示する
+function renderStaffingRows(requiredMode, assignedList) {
+  const required = (requiredMode && requiredMode.hours) || {};
   const actual = computeHourlyActualCounts(assignedList);
 
   document.getElementById("gcountrow").innerHTML = GRID_HOURS.map((h) => `<div class="ghour" style="font-weight:700; color:#334155;">${actual[h]}</div>`).join("");
@@ -941,6 +1046,32 @@ function renderStaffingRows(date, assignedList) {
     }
     return `<div class="gstatuscell ${cls}" title="${h}時: ${title}"></div>`;
   }).join("");
+}
+
+// 日別画面のモード選択プルダウンを、その日の実際の適用状況に合わせて表示
+function renderDayModeSelect(date, requiredMode) {
+  const sel = document.getElementById("dayModeSelect");
+  sel.innerHTML = staffingModesCache.map((m) => `<option value="${m.id}" ${m.id === requiredMode.modeId ? "selected" : ""}>${m.name}${!requiredMode.isOverride && m.id === requiredMode.modeId ? "(自動判定)" : ""}</option>`).join("")
+    + `<option value="" ${!requiredMode.isOverride ? "" : ""}>― 自動判定に戻す ―</option>`;
+  sel.value = requiredMode.modeId;
+}
+
+async function onDayModeChange() {
+  const date = document.getElementById("gridDate").value || gridDateVal;
+  const modeId = document.getElementById("dayModeSelect").value;
+  await apiCall(API_URL, "setDateMode", { date, modeId: modeId || "" });
+  await renderGrid();
+}
+
+// スタッフ一覧の時給から、確定シフトの人件費(概算)を計算する
+function calcLaborCost(assignedList) {
+  let total = 0;
+  assignedList.forEach((a) => {
+    const staff = staffList.find((s) => s.id === a.staffId);
+    if (!staff) return;
+    total += calcHours(a) * (staff.hourlyWage || 0);
+  });
+  return total;
 }
 
 /* ---- シフト種別(ポジション)管理 ---- */
