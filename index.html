@@ -30,6 +30,7 @@
   th { color:#94a3b8; font-size:11px; text-transform:uppercase; }
   .hidden { display:none; }
   .error { color:#e11d48; font-size:12px; margin: -6px 0 10px; }
+  .hint { background:#f0fdfa; color:#0f766e; font-size:12px; padding:8px 10px; border-radius:8px; margin-bottom:12px; }
   .muted { color:#94a3b8; font-size:12px; }
   .navrow { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
   .datebar { display:flex; align-items:center; gap:6px; border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; background:#fff; }
@@ -49,7 +50,11 @@
   .gname { width:90px; flex-shrink:0; padding:6px; }
   .gname .n { font-size:12px; font-weight:700; color:#334155; }
   .gname .w { font-size:10px; color:#94a3b8; }
-  .gtrack { position:relative; flex:1; padding:8px 0; cursor:pointer; }
+  .gtrack { position:relative; flex:1; padding:8px 0; cursor:crosshair; touch-action:none; }
+  .gdragpreview {
+    position:absolute; top:0; height:28px; background:#dbeafe; border:2px dashed #3b82f6; border-radius:4px;
+    font-size:10px; font-weight:700; color:#1d4ed8; line-height:24px; padding:0 5px; overflow:hidden; white-space:nowrap; pointer-events:none;
+  }
   .glines { position:absolute; inset:0; display:flex; pointer-events:none; }
   .gline { flex:1; border-left:1px solid #f8fafc; }
   .gasn { position:relative; height:28px; margin-bottom:3px; }
@@ -58,6 +63,8 @@
     font-size:11px; font-weight:700; color:#166534; line-height:26px; padding:0 6px; overflow:hidden; white-space:nowrap; cursor:pointer;
   }
   .gasnbar:hover { background:#bbf7d0; }
+  .gasnbar.draft { background:#fef3c7; border-color:#f59e0b; color:#92400e; }
+  .gasnbar.draft:hover { background:#fde68a; }
   .gasnbreak { position:absolute; top:0; height:28px; background:rgba(255,255,255,.65); border-left:1px dashed #4ade80; border-right:1px dashed #4ade80; pointer-events:none; }
   .greq { position:relative; height:22px; }
   .greqbar {
@@ -80,6 +87,7 @@
   #periodTable th, #periodTable td { text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; padding:4px 2px; }
   #periodTable th:first-child, #periodTable td:first-child { text-align:left; background:#fff; width:70px; padding-left:6px; }
   #periodTable td.pcell.on { background:#f0fdfa; color:#0f766e; font-weight:600; }
+  #periodTable td.pcell.on.draft { background:#fef3c7; color:#92400e; }
   #periodTable .pname { font-weight:700; color:#334155; font-size:11px; }
   #periodTable .phours { font-size:9px; color:#0d9488; }
 </style>
@@ -126,7 +134,9 @@
           </div>
           <button class="secondary small" onclick="gridChangeDay(1)">→</button>
           <button class="secondary small" onclick="gridToday()">今日</button>
+          <button onclick="confirmDayShifts()">この日のシフトを確定</button>
         </div>
+        <div id="dayConfirmMsg" class="hint hidden"></div>
         <div class="card gridwrap">
           <div class="gridinner">
             <div class="ghead">
@@ -138,8 +148,9 @@
         </div>
         <div class="glegend">
           <span><span class="sw" style="background:#dcfce7; border:1px solid #4ade80"></span>確定シフト(白い切れ目=休憩)</span>
+          <span><span class="sw" style="background:#fef3c7; border:1px solid #f59e0b"></span>未確定(スタッフにはまだ見えません)</span>
           <span><span class="sw" style="background:transparent; border-top:1px solid #cbd5e1"></span>希望シフト</span>
-          <span>帯の空いている場所をクリックで確定シフト追加、緑の帯をクリックで編集・削除</span>
+          <span>空いている場所をタップ&ドラッグでシフトを自動作成(動かさずタップすると入力画面)、既存の帯をタップで編集・削除</span>
         </div>
       </div>
 
@@ -150,14 +161,16 @@
           <div id="periodLabel" style="font-weight:600; font-size:14px;"></div>
           <button class="secondary small" onclick="periodChange(1)">→</button>
           <button class="secondary small" onclick="periodToday()">今日</button>
+          <button onclick="confirmPeriodShifts()">この期間のシフトを確定</button>
         </div>
+        <div id="periodConfirmMsg" class="hint hidden"></div>
         <div class="card gridwrap">
           <table id="periodTable">
             <thead><tr id="periodHeadRow"></tr></thead>
             <tbody id="periodBody"></tbody>
           </table>
         </div>
-        <p class="muted">スタッフ名の横の時間は、この期間の確定シフト合計時間(休憩を除く)です。セルは各日の確定シフトの時間帯です。</p>
+        <p class="muted">スタッフ名の横の時間は、この期間の確定シフト合計時間(休憩を除く)です。セルは各日の確定シフトの時間帯です。「シフトを確定」を押すまでスタッフ側には表示されません。</p>
       </div>
     </div>
 
@@ -304,6 +317,24 @@ function gridToday() {
   renderGrid();
 }
 
+async function confirmDayShifts() {
+  const date = document.getElementById("gridDate").value || gridDateVal;
+  const msg = document.getElementById("dayConfirmMsg");
+  try {
+    const result = await apiCall(API_URL, "confirmShifts", { dates: [date] });
+    msg.textContent = result.count > 0 ? `${formatDateLabel(date)}のシフト${result.count}件をスタッフに公開しました。` : "この日にはまだ確定シフトがありません。";
+    msg.classList.remove("hidden");
+    await renderGrid();
+  } catch (e) {
+    msg.textContent = "通信エラー: " + e.message;
+    msg.classList.remove("hidden");
+  }
+}
+
+function formatDateLabel(d) {
+  return `${Number(d.slice(5,7))}月${Number(d.slice(8,10))}日`;
+}
+
 function gridClampMin(min) {
   return Math.max(GRID_START_HOUR * 60, Math.min(GRID_END_HOUR * 60, min));
 }
@@ -360,6 +391,7 @@ async function renderGrid() {
 
     const asnBarHtml = asg ? (() => {
       const p = gridPos(asg.start, asg.end);
+      const isPublished = asg.published === true || asg.published === "TRUE" || asg.published === "true";
       const hasBreak = asg.breakStart && asg.breakEnd;
       const breakHtml = hasBreak ? (() => {
         const bp = gridPos(asg.breakStart, asg.breakEnd);
@@ -368,18 +400,19 @@ async function renderGrid() {
         const relWidth = p.width > 0 ? (bp.width / p.width) * 100 : 0;
         return `<div class="gasnbreak" style="left:${relLeft}%; width:${relWidth}%" title="休憩 ${asg.breakStart}〜${asg.breakEnd}"></div>`;
       })() : "";
-      return `<div class="gasnbar" style="left:${p.left}%; width:${p.width}%" data-assigned-id="${asg.id}" onclick="event.stopPropagation(); openShiftModalById('${s.id}','${s.name.replace(/'/g, "\\'")}','${date}','${asg.id}')">${asg.start}-${asg.end}${breakHtml}</div>`;
+      return `<div class="gasnbar${isPublished ? "" : " draft"}" style="left:${p.left}%; width:${p.width}%" data-assigned-id="${asg.id}" onclick="event.stopPropagation(); openShiftModalById('${s.id}','${s.name.replace(/'/g, "\\'")}','${date}','${asg.id}')" title="${isPublished ? "確定済み" : "未確定(まだスタッフには見えません)"}">${asg.start}-${asg.end}${breakHtml}</div>`;
     })() : "";
 
     row.innerHTML = `
       <div class="gname"><div class="n">${s.name}${dayHours > 0 ? ` <span class="phours">(${dayHours.toFixed(1)}h)</span>` : ""}</div><div class="w">${req ? (req.isDayOff ? "休み希望" : "希望あり") : "希望なし"}</div></div>
-      <div class="gtrack" onclick="trackClicked(event, '${s.id}', '${s.name.replace(/'/g, "\\'")}', '${date}')">
+      <div class="gtrack">
         <div class="glines">${GRID_HOURS.map(() => '<div class="gline"></div>').join("")}</div>
         <div class="gasn">${asnBarHtml}</div>
         <div class="greq">${reqBarHtml}</div>
       </div>
     `;
     rows.appendChild(row);
+    attachTrackDrag(row.querySelector(".gtrack"), s.id, s.name, date);
   });
 
   if (staffList.length === 0) {
@@ -458,6 +491,20 @@ function periodToday() {
   renderPeriod();
 }
 
+async function confirmPeriodShifts() {
+  const dates = periodDates();
+  const msg = document.getElementById("periodConfirmMsg");
+  try {
+    const result = await apiCall(API_URL, "confirmShifts", { dates });
+    msg.textContent = result.count > 0 ? `この期間の確定シフト${result.count}件をスタッフに公開しました。` : "この期間にはまだ確定シフトがありません。";
+    msg.classList.remove("hidden");
+    await renderPeriod();
+  } catch (e) {
+    msg.textContent = "通信エラー: " + e.message;
+    msg.classList.remove("hidden");
+  }
+}
+
 async function renderPeriod() {
   const dates = periodDates();
   let label;
@@ -499,7 +546,9 @@ async function renderPeriod() {
     const nameCell = `<td><div class="pname">${s.name}</div><div class="phours">${totalHours.toFixed(1)}時間</div></td>`;
     const cells = dates.map((d) => {
       const a = byDate[d];
-      return a ? `<td class="pcell on">${a.start}-${a.end}</td>` : `<td class="pcell"></td>`;
+      if (!a) return `<td class="pcell"></td>`;
+      const isPublished = a.published === true || a.published === "TRUE" || a.published === "true";
+      return `<td class="pcell on${isPublished ? "" : " draft"}" title="${isPublished ? "確定済み" : "未確定"}">${a.start}-${a.end}</td>`;
     }).join("");
     tr.innerHTML = nameCell + cells;
     body.appendChild(tr);
@@ -510,8 +559,77 @@ async function renderPeriod() {
 }
 
 // 帯の空いている場所をクリックしたときだけ「新規追加」を開く(既存の帯自体のクリックは gasnbar 側の stopPropagation で処理)
-function trackClicked(e, staffId, staffName, date) {
-  openShiftModal(staffId, staffName, date, null);
+// 帯をタップ&ドラッグして時間を描くと、そのまま確定シフトとして自動保存する。
+// ただの(動かさない)タップの場合は、これまで通り詳細入力用のモーダルを開く。
+let dragState = null;
+
+function pxToTimeMin(clientX, rect) {
+  const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  const totalMin = GRID_START_HOUR * 60 + pct * GRID_RANGE_MIN;
+  return Math.round(totalMin / 15) * 15; // 15分刻みにスナップ
+}
+function minToTimeStr(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function updateDragPreview() {
+  if (!dragState) return;
+  const s = Math.min(dragState.startMin, dragState.currentMin);
+  const e = Math.max(dragState.startMin, dragState.currentMin);
+  const left = ((gridClampMin(s) - GRID_START_HOUR * 60) / GRID_RANGE_MIN) * 100;
+  const width = Math.max(0.5, ((gridClampMin(e) - gridClampMin(s)) / GRID_RANGE_MIN) * 100);
+  dragState.previewEl.style.left = left + "%";
+  dragState.previewEl.style.width = width + "%";
+  dragState.previewEl.textContent = minToTimeStr(s) + "-" + minToTimeStr(e);
+}
+
+function attachTrackDrag(trackEl, staffId, staffName, date) {
+  trackEl.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".gasnbar")) return; // 既存の帯の上はドラッグ開始しない(帯自体のクリックで編集)
+    const rect = trackEl.getBoundingClientRect();
+    const startMin = pxToTimeMin(e.clientX, rect);
+    const preview = document.createElement("div");
+    preview.className = "gdragpreview";
+    trackEl.querySelector(".gasn").appendChild(preview);
+    dragState = { trackEl, staffId, staffName, date, startMin, currentMin: startMin, moved: false, rect, previewEl: preview };
+    updateDragPreview();
+    trackEl.setPointerCapture(e.pointerId);
+  });
+
+  trackEl.addEventListener("pointermove", (e) => {
+    if (!dragState || dragState.trackEl !== trackEl) return;
+    const min = pxToTimeMin(e.clientX, dragState.rect);
+    if (min !== dragState.startMin) dragState.moved = true;
+    dragState.currentMin = min;
+    updateDragPreview();
+  });
+
+  trackEl.addEventListener("pointerup", async (e) => {
+    if (!dragState || dragState.trackEl !== trackEl) return;
+    const ds = dragState;
+    dragState = null;
+    if (ds.previewEl) ds.previewEl.remove();
+
+    if (!ds.moved) {
+      // 動かさずタップしただけ:従来通りモーダルで新規作成
+      openShiftModal(ds.staffId, ds.staffName, ds.date, null);
+      return;
+    }
+
+    let s = Math.min(ds.startMin, ds.currentMin);
+    let en = Math.max(ds.startMin, ds.currentMin);
+    if (en - s < 15) en = s + 15; // 最低15分は確保
+    const start = minToTimeStr(s);
+    const end = minToTimeStr(en);
+    try {
+      await apiCall(API_URL, "saveAssigned", { staffId: ds.staffId, date: ds.date, start, end, breakStart: "", breakEnd: "" });
+      await renderGrid();
+    } catch (err) {
+      alert("保存に失敗しました: " + err.message);
+    }
+  });
 }
 
 function openShiftModalById(staffId, staffName, date, assignedId) {
