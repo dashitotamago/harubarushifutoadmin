@@ -161,6 +161,7 @@
           <div style="display:flex; align-items:center; gap:6px;">
             <label style="margin:0; font-size:12px;">この日のモード:</label>
             <select id="dayModeSelect" onchange="onDayModeChange()" style="width:auto; margin:0;"></select>
+            <span id="holidayBadge" class="badge no" style="display:none;">🎌祝日</span>
           </div>
           <div id="dayLaborCost" style="font-size:13px; font-weight:700; color:#334155;"></div>
         </div>
@@ -277,7 +278,7 @@
       </div>
       <div class="card">
         <h3>祝日カレンダー</h3>
-        <p class="muted">登録した日は、平日でも「土日祝」の理論シフトが自動的に適用されます。</p>
+        <p class="muted">日本の祝日は、Googleの祝日カレンダーを参照して自動的に「土日祝」の理論シフトが適用されます。ここでは、それとは別に、お店独自の休業日など「祝日ではないが土日祝扱いにしたい日」を追加で登録できます(任意)。</p>
         <div class="row">
           <div style="flex:1"><input id="newHolidayDate" type="date" /></div>
           <button onclick="addHoliday()" style="width:auto;">追加</button>
@@ -1054,6 +1055,7 @@ function renderDayModeSelect(date, requiredMode) {
   sel.innerHTML = staffingModesCache.map((m) => `<option value="${m.id}" ${m.id === requiredMode.modeId ? "selected" : ""}>${m.name}${!requiredMode.isOverride && m.id === requiredMode.modeId ? "(自動判定)" : ""}</option>`).join("")
     + `<option value="" ${!requiredMode.isOverride ? "" : ""}>― 自動判定に戻す ―</option>`;
   sel.value = requiredMode.modeId;
+  document.getElementById("holidayBadge").style.display = requiredMode.isHoliday ? "inline-block" : "none";
 }
 
 async function onDayModeChange() {
