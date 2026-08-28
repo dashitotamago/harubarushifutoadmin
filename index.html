@@ -42,6 +42,13 @@
   .deadlinecard .row { align-items:flex-start; }
   .deadlinecard .dtitle { font-size:13px; font-weight:700; color:#334155; }
   .deadlinecard .ddesc { font-size:11px; color:#94a3b8; margin-top:2px; }
+  .positionitem { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #f1f5f9; }
+  .positionitem .swatch { width:18px; height:18px; border-radius:5px; flex-shrink:0; }
+  .positionitem .pname { flex:1; font-size:13px; font-weight:600; color:#334155; }
+  .segrow { display:flex; align-items:center; gap:6px; margin-bottom:8px; }
+  .segrow input[type=time] { width:auto; flex:1; margin:0; }
+  .segrow select { flex:1.4; margin:0; padding:8px 6px; font-size:12px; }
+  .segrow button { width:auto; padding:6px 8px; }
 
   /* 横棒シフトグリッド */
   .gridwrap { width:100%; }
@@ -81,7 +88,7 @@
 
   /* シフト編集モーダル */
   .modal-overlay { position:fixed; inset:0; background:rgba(15,23,42,.4); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
-  .modal-box { background:#fff; border-radius:14px; padding:18px; width:100%; max-width:340px; }
+  .modal-box { background:#fff; border-radius:14px; padding:18px; width:100%; max-width:380px; max-height:88vh; overflow-y:auto; }
   .modal-box h3 { margin-top:0; }
   .modal-actions { display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
   .modal-overlay.hidden { display:none; }
@@ -155,6 +162,7 @@
           <span><span class="sw" style="background:#fef3c7; border:1px solid #f59e0b"></span>未確定(スタッフにはまだ見えません)</span>
           <span><span class="sw" style="background:transparent; border-top:1px solid #cbd5e1"></span>希望シフト</span>
           <span>空いている場所をタップ&ドラッグでシフトを自動作成(動かさずタップすると入力画面)、既存の帯をタップで編集・削除</span>
+          <span>編集画面の「ポジション分け」で時間帯ごとに色分けできます</span>
         </div>
       </div>
 
@@ -195,6 +203,9 @@
             <div style="flex:1"><label>休憩終了</label><input type="time" id="modalBreakEnd" /></div>
           </div>
         </div>
+        <label style="margin-top:6px;">ポジション分け(任意)</label>
+        <div id="segList"></div>
+        <button type="button" class="secondary small" onclick="addSegRow()">+ 時間帯を追加</button>
         <div id="modalError" class="error hidden"></div>
         <div class="modal-actions">
           <button class="danger small" id="modalDeleteBtn" onclick="deleteFromModal()">削除</button>
@@ -220,6 +231,16 @@
         <label>パスコード</label>
         <input id="newPasscode" />
         <button onclick="changePasscode()">変更する</button>
+      </div>
+      <div class="card">
+        <h3>シフト種別(ポジション)</h3>
+        <p class="muted">シフトを時間帯ごとに色分けするための種別を登録します(例: ホール・キッチンなど)。</p>
+        <div class="row">
+          <div style="flex:1"><label>ポジション名</label><input id="newPositionName" placeholder="例) ホール" /></div>
+          <div style="flex:0 0 70px"><label>色</label><input id="newPositionColor" type="color" value="#f87171" style="padding:2px; height:36px;" /></div>
+        </div>
+        <button onclick="addPosition()">登録する</button>
+        <div id="positionList" style="margin-top:10px;"></div>
       </div>
       <div class="card">
         <h3>シフト提出期限の解除</h3>
@@ -266,6 +287,7 @@ async function apiCall(url, action, payload) {
 }
 
 let staffList = [];
+let positionList = [];
 let gridDateVal = todayStr();
 
 function init() {
@@ -286,6 +308,7 @@ async function doAdminLogin() {
       return;
     }
     staffList = await apiCall(API_URL, "getStaffList"); // ログイン後に1回だけ取得し、以後は使い回す
+    positionList = await apiCall(API_URL, "getPositions");
     document.getElementById("loginView").classList.add("hidden");
     document.getElementById("mainView").classList.remove("hidden");
     document.getElementById("gridDate").value = gridDateVal;
@@ -312,7 +335,7 @@ function switchTab(key) {
     if (gridViewMode === "day") renderGrid();
     else renderPeriod();
   }
-  if (key === "settings") renderDeadlines();
+  if (key === "settings") { renderDeadlines(); renderPositionList(); }
 }
 
 /* ---- シフト管理(横棒グリッド表示) ---- */
@@ -410,12 +433,21 @@ async function renderGrid() {
       const hasBreak = asg.breakStart && asg.breakEnd;
       const breakHtml = hasBreak ? (() => {
         const bp = gridPos(asg.breakStart, asg.breakEnd);
-        // 休憩の位置は「バー全体に対する相対%」に変換して重ねる
-        const relLeft = p.width > 0 ? ((bp.left - p.left) / p.width) * 100 : 0;
-        const relWidth = p.width > 0 ? (bp.width / p.width) * 100 : 0;
-        return `<div class="gasnbreak" style="left:${relLeft}%; width:${relWidth}%" title="休憩 ${asg.breakStart}〜${asg.breakEnd}"></div>`;
+        return `<div class="gasnbreak" style="left:${bp.left}%; width:${bp.width}%" title="休憩 ${asg.breakStart}〜${asg.breakEnd}"></div>`;
       })() : "";
-      return `<div class="gasnbar${isPublished ? "" : " draft"}" style="left:${p.left}%; width:${p.width}%" data-assigned-id="${asg.id}" onclick="event.stopPropagation(); openShiftModalById('${s.id}','${s.name.replace(/'/g, "\\'")}','${date}','${asg.id}')" title="${isPublished ? "確定済み" : "未確定(まだスタッフには見えません)"}">${asg.start}-${asg.end}${breakHtml}</div>`;
+      const clickAttr = `data-assigned-id="${asg.id}" onclick="event.stopPropagation(); openShiftModalById('${s.id}','${s.name.replace(/'/g, "\\'")}','${date}','${asg.id}')" title="${isPublished ? "確定済み" : "未確定(まだスタッフには見えません)"}"`;
+
+      if (asg.segments && asg.segments.length > 0) {
+        const segBars = asg.segments.map((seg) => {
+          const sp = gridPos(seg.start, seg.end);
+          const pos = positionList.find((x) => x.id === seg.positionId);
+          const color = pos ? pos.color : "#cbd5e1";
+          const label = pos ? pos.name : "?";
+          return `<div class="gasnbar${isPublished ? "" : " draft"}" style="left:${sp.left}%; width:${sp.width}%; background:${color}; border-color:${color}; ${isPublished ? "" : "opacity:.55; border-style:dashed;"}" ${clickAttr}>${label} ${seg.start}-${seg.end}</div>`;
+        }).join("");
+        return segBars + breakHtml;
+      }
+      return `<div class="gasnbar${isPublished ? "" : " draft"}" style="left:${p.left}%; width:${p.width}%" ${clickAttr}>${asg.start}-${asg.end}</div>${breakHtml}`;
     })() : "";
 
     row.innerHTML = `
@@ -666,6 +698,7 @@ function openShiftModal(staffId, staffName, date, assigned) {
   document.getElementById("modalBreakRow").classList.toggle("hidden", !hasBreak);
   document.getElementById("modalDeleteBtn").classList.toggle("hidden", !assigned);
   document.getElementById("modalError").classList.add("hidden");
+  renderSegList((assigned && assigned.segments) || []);
   document.getElementById("shiftModal").style.display = "flex";
 }
 
@@ -676,6 +709,45 @@ function closeModal() {
 
 function toggleModalBreak() {
   document.getElementById("modalBreakRow").classList.toggle("hidden", !document.getElementById("modalHasBreak").checked);
+}
+
+/* ---- ポジション分け(セグメント)の編集 ---- */
+function positionOptionsHtml(selectedId) {
+  return positionList.map((p) => `<option value="${p.id}" ${p.id === selectedId ? "selected" : ""}>${p.name}</option>`).join("");
+}
+
+function renderSegList(segments) {
+  const el = document.getElementById("segList");
+  el.innerHTML = "";
+  if (positionList.length === 0) {
+    el.innerHTML = `<p class="muted">先に「設定」タブでポジションを登録してください。</p>`;
+    return;
+  }
+  segments.forEach((seg) => addSegRow(seg));
+}
+
+function addSegRow(seg) {
+  if (positionList.length === 0) return;
+  const el = document.getElementById("segList");
+  if (el.querySelector(".muted")) el.innerHTML = "";
+  const row = document.createElement("div");
+  row.className = "segrow";
+  row.innerHTML = `
+    <input type="time" class="seg-start" value="${seg ? seg.start : ""}">
+    <span>〜</span>
+    <input type="time" class="seg-end" value="${seg ? seg.end : ""}">
+    <select class="seg-position">${positionOptionsHtml(seg ? seg.positionId : null)}</select>
+    <button type="button" class="danger small" onclick="this.parentElement.remove()">×</button>
+  `;
+  el.appendChild(row);
+}
+
+function collectSegments() {
+  return Array.from(document.querySelectorAll("#segList .segrow")).map((row) => ({
+    start: row.querySelector(".seg-start").value,
+    end: row.querySelector(".seg-end").value,
+    positionId: row.querySelector(".seg-position").value,
+  }));
 }
 
 async function saveFromModal() {
@@ -697,12 +769,20 @@ async function saveFromModal() {
     err.classList.remove("hidden");
     return;
   }
+  const segments = collectSegments();
+  for (const seg of segments) {
+    if (!seg.start || !seg.end || toMin(seg.start) >= toMin(seg.end)) {
+      err.textContent = "ポジション分けの時間帯を正しく入力してください。";
+      err.classList.remove("hidden");
+      return;
+    }
+  }
   try {
     await apiCall(API_URL, "saveAssigned", {
       id: modalCtx.assignedId || undefined,
       staffId: modalCtx.staffId,
       date: modalCtx.date,
-      start, end, breakStart, breakEnd,
+      start, end, breakStart, breakEnd, segments,
     });
     closeModal();
     await renderGrid();
@@ -741,6 +821,43 @@ async function changePasscode() {
   await apiCall(API_URL, "setSetting", { key: "punchPasscode", value: code.trim() });
   document.getElementById("newPasscode").value = "";
   alert("変更しました");
+}
+
+/* ---- シフト種別(ポジション)管理 ---- */
+
+async function renderPositionList() {
+  const el = document.getElementById("positionList");
+  el.innerHTML = "";
+  positionList.forEach((p) => {
+    const div = document.createElement("div");
+    div.className = "positionitem";
+    div.innerHTML = `
+      <div class="swatch" style="background:${p.color}"></div>
+      <div class="pname">${p.name}</div>
+      <button class="danger small" onclick="deletePosition('${p.id}')">削除</button>
+    `;
+    el.appendChild(div);
+  });
+  if (positionList.length === 0) {
+    el.innerHTML = `<p class="muted">まだポジションが登録されていません。</p>`;
+  }
+}
+
+async function addPosition() {
+  const name = document.getElementById("newPositionName").value.trim();
+  const color = document.getElementById("newPositionColor").value;
+  if (!name) { alert("ポジション名を入力してください"); return; }
+  await apiCall(API_URL, "addPosition", { name, color });
+  document.getElementById("newPositionName").value = "";
+  positionList = await apiCall(API_URL, "getPositions");
+  renderPositionList();
+}
+
+async function deletePosition(id) {
+  if (!confirm("このポジションを削除しますか?(既存のシフトに設定されている分は色が消えます)")) return;
+  await apiCall(API_URL, "deletePosition", { id });
+  positionList = await apiCall(API_URL, "getPositions");
+  renderPositionList();
 }
 
 /* ---- シフト提出期限の解除 ---- */
