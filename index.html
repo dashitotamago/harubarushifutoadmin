@@ -49,6 +49,10 @@
   .segrow input[type=time] { width:auto; flex:1; margin:0; }
   .segrow select { flex:1.4; margin:0; padding:8px 6px; font-size:12px; }
   .segrow button { width:auto; padding:6px 8px; }
+  .reqgrid { display:flex; flex-wrap:wrap; gap:8px; }
+  .reqcell { width:64px; text-align:center; }
+  .reqcell label { font-size:10px; }
+  .reqcell input { width:100%; text-align:center; padding:6px 2px; margin:0; }
 
   /* 横棒シフトグリッド */
   .gridwrap { width:100%; }
@@ -57,6 +61,12 @@
   .gnamecol { width:90px; flex-shrink:0; padding:6px 6px; font-size:10px; color:#94a3b8; font-weight:600; }
   .ghours { display:flex; flex:1; }
   .ghour { flex:1; min-width:0; text-align:center; font-size:9px; color:#94a3b8; padding:5px 0; border-left:1px solid #f8fafc; overflow:hidden; white-space:nowrap; }
+  .gstatusrow { display:flex; flex:1; gap:1px; }
+  .gstatuscell { flex:1; height:7px; border-radius:2px; }
+  .gstatuscell.match { background:#4ade80; }
+  .gstatuscell.under { background:#60a5fa; }
+  .gstatuscell.over { background:#f87171; }
+  .gstatuscell.none { background:#e5e7eb; }
   .growrap { display:flex; border-bottom:1px solid #f8fafc; }
   .gname { width:90px; flex-shrink:0; padding:6px; }
   .gname .n { font-size:12px; font-weight:700; color:#334155; }
@@ -150,12 +160,25 @@
         <div id="dayConfirmMsg" class="hint hidden"></div>
         <div class="card gridwrap">
           <div class="gridinner">
+            <div class="ghead" style="border-bottom:none;">
+              <div class="gnamecol"></div>
+              <div class="ghours" id="gcountrow"></div>
+            </div>
+            <div class="ghead" style="border-bottom:none; padding-top:0;">
+              <div class="gnamecol"></div>
+              <div class="gstatusrow" id="gstatusrow"></div>
+            </div>
             <div class="ghead">
               <div class="gnamecol">スタッフ</div>
               <div class="ghours" id="ghours"></div>
             </div>
             <div id="gridRows"></div>
           </div>
+        </div>
+        <div class="glegend">
+          <span><span class="sw" style="background:#4ade80"></span>必要人数ちょうど</span>
+          <span><span class="sw" style="background:#60a5fa"></span>不足</span>
+          <span><span class="sw" style="background:#f87171"></span>過剰</span>
         </div>
         <div class="glegend">
           <span><span class="sw" style="background:#dcfce7; border:1px solid #4ade80"></span>確定シフト(白い切れ目=休憩)</span>
@@ -243,6 +266,16 @@
         <div id="positionList" style="margin-top:10px;"></div>
       </div>
       <div class="card">
+        <h3>理論シフト(時間別必要人数)</h3>
+        <p class="muted">1時間ごとの必要人数を、平日・土日祝それぞれで設定します(祝日カレンダーには対応していないため、土曜・日曜を「土日祝」として扱います)。</p>
+        <div class="tabs" style="margin-bottom:10px;">
+          <div class="tab active" data-reqday="weekday" onclick="switchRequiredDay('weekday')">平日</div>
+          <div class="tab" data-reqday="weekend" onclick="switchRequiredDay('weekend')">土日祝</div>
+        </div>
+        <div id="requiredGrid"></div>
+        <button onclick="saveRequiredStaffing()" style="margin-top:10px;">この内容で保存する</button>
+      </div>
+      <div class="card">
         <h3>シフト提出期限の解除</h3>
         <p class="muted">1〜15日分は前月20日、16日〜月末分は当月5日が提出期限です。期限を過ぎてもスタッフに提出させたい場合、ここで期間ごとに解除できます。</p>
         <div class="navrow">
@@ -309,6 +342,7 @@ async function doAdminLogin() {
     }
     staffList = await apiCall(API_URL, "getStaffList"); // ログイン後に1回だけ取得し、以後は使い回す
     positionList = await apiCall(API_URL, "getPositions");
+    await loadRequiredStaffing();
     document.getElementById("loginView").classList.add("hidden");
     document.getElementById("mainView").classList.remove("hidden");
     document.getElementById("gridDate").value = gridDateVal;
@@ -335,7 +369,7 @@ function switchTab(key) {
     if (gridViewMode === "day") renderGrid();
     else renderPeriod();
   }
-  if (key === "settings") { renderDeadlines(); renderPositionList(); }
+  if (key === "settings") { renderDeadlines(); renderPositionList(); loadRequiredStaffing(); }
 }
 
 /* ---- シフト管理(横棒グリッド表示) ---- */
@@ -410,6 +444,7 @@ async function renderGrid() {
     rows.innerHTML = `<div class="error" style="padding:16px;">読み込みに失敗しました: ${e.message}</div>`;
     return;
   }
+  renderStaffingRows(date, currentDayData.assigned);
   rows.innerHTML = "";
 
   staffList.forEach((s) => {
@@ -821,6 +856,91 @@ async function changePasscode() {
   await apiCall(API_URL, "setSetting", { key: "punchPasscode", value: code.trim() });
   document.getElementById("newPasscode").value = "";
   alert("変更しました");
+}
+
+/* ---- 理論シフト(時間別必要人数) ---- */
+let requiredDayType = "weekday"; // weekday | weekend
+let requiredStaffing = { weekday: {}, weekend: {} };
+
+function switchRequiredDay(type) {
+  requiredDayType = type;
+  document.querySelectorAll('.tab[data-reqday]').forEach((t) => t.classList.toggle("active", t.dataset.reqday === type));
+  renderRequiredGrid();
+}
+
+async function loadRequiredStaffing() {
+  try {
+    const settings = await apiCall(API_URL, "getSettings");
+    requiredStaffing.weekday = settings.requiredStaffing_weekday ? JSON.parse(settings.requiredStaffing_weekday) : {};
+    requiredStaffing.weekend = settings.requiredStaffing_weekend ? JSON.parse(settings.requiredStaffing_weekend) : {};
+  } catch (e) {
+    requiredStaffing = { weekday: {}, weekend: {} };
+  }
+  renderRequiredGrid();
+}
+
+function renderRequiredGrid() {
+  const el = document.getElementById("requiredGrid");
+  const current = requiredStaffing[requiredDayType] || {};
+  el.innerHTML = `<div class="reqgrid">` + GRID_HOURS.map((h) => `
+    <div class="reqcell">
+      <label>${h}時</label>
+      <input type="number" min="0" class="req-hour" data-hour="${h}" value="${current[h] !== undefined ? current[h] : 0}">
+    </div>
+  `).join("") + `</div>`;
+}
+
+async function saveRequiredStaffing() {
+  const map = {};
+  document.querySelectorAll(".req-hour").forEach((inp) => {
+    map[inp.dataset.hour] = Number(inp.value) || 0;
+  });
+  requiredStaffing[requiredDayType] = map;
+  await apiCall(API_URL, "setSetting", { key: "requiredStaffing_" + requiredDayType, value: JSON.stringify(map) });
+  alert("保存しました");
+  if (gridViewMode === "day") renderGrid();
+}
+
+// 表示中の日付が平日か土日祝(土日として判定)かを返す
+function requiredDayTypeForDate(dateStr) {
+  const wd = new Date(dateStr + "T00:00:00").getDay();
+  return (wd === 0 || wd === 6) ? "weekend" : "weekday";
+}
+
+// その日の各時間帯の実際の人数を、確定シフトの開始〜終了から集計する
+function computeHourlyActualCounts(assignedList) {
+  const counts = {};
+  GRID_HOURS.forEach((h) => (counts[h] = 0));
+  assignedList.forEach((a) => {
+    let s = toMin(a.start);
+    let e = toMin(a.end);
+    if (e <= s) e += 24 * 60;
+    GRID_HOURS.forEach((h) => {
+      const hStart = h * 60, hEnd = (h + 1) * 60;
+      if (s < hEnd && e > hStart) counts[h]++;
+    });
+  });
+  return counts;
+}
+
+function renderStaffingRows(date, assignedList) {
+  const dayType = requiredDayTypeForDate(date);
+  const required = requiredStaffing[dayType] || {};
+  const actual = computeHourlyActualCounts(assignedList);
+
+  document.getElementById("gcountrow").innerHTML = GRID_HOURS.map((h) => `<div class="ghour" style="font-weight:700; color:#334155;">${actual[h]}</div>`).join("");
+
+  document.getElementById("gstatusrow").innerHTML = GRID_HOURS.map((h) => {
+    const req = required[h];
+    let cls = "none";
+    let title = "必要人数が未設定です";
+    if (req !== undefined) {
+      if (actual[h] === req) { cls = "match"; title = `必要人数ちょうど(${actual[h]}/${req}人)`; }
+      else if (actual[h] < req) { cls = "under"; title = `不足(${actual[h]}/${req}人)`; }
+      else { cls = "over"; title = `過剰(${actual[h]}/${req}人)`; }
+    }
+    return `<div class="gstatuscell ${cls}" title="${h}時: ${title}"></div>`;
+  }).join("");
 }
 
 /* ---- シフト種別(ポジション)管理 ---- */
