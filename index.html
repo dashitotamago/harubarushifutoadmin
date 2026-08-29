@@ -125,6 +125,10 @@
     <div class="muted" style="margin-bottom:10px;">初期パスワード: admin123</div>
     <div id="loginError" class="error hidden"></div>
     <button onclick="doAdminLogin()">ログイン</button>
+    <div style="text-align:center; margin-top:10px;">
+      <a onclick="requestPasswordReset()" style="font-size:12px; color:#0d9488; cursor:pointer;">パスワードを忘れた場合</a>
+    </div>
+    <div id="resetMsg" class="hint hidden" style="margin-top:10px;"></div>
   </div>
 
   <div id="mainView" class="hidden">
@@ -152,6 +156,7 @@
           <button class="secondary small" onclick="gridChangeDay(-1)">←</button>
           <div class="datebar">
             <input id="gridDate" type="date" onchange="renderGrid()" />
+            <span id="gridDateWeekday" style="font-size:12px; font-weight:600; color:#64748b;"></span>
           </div>
           <button class="secondary small" onclick="gridChangeDay(1)">→</button>
           <button class="secondary small" onclick="gridToday()">今日</button>
@@ -327,6 +332,10 @@ function addDays(dateStr, n) {
 function yen(n) {
   return "¥" + Math.round(Number(n) || 0).toLocaleString("ja-JP");
 }
+const WEEKDAY_JP = ["日", "月", "火", "水", "木", "金", "土"];
+function weekdayOf(dateStr) {
+  return WEEKDAY_JP[new Date(dateStr + "T00:00:00").getDay()];
+}
 function toMin(hhmm) {
   if (!hhmm) return 0;
   const [h, m] = hhmm.split(":").map(Number);
@@ -375,6 +384,22 @@ async function doAdminLogin() {
   } catch (e) {
     errEl.textContent = "通信エラー: " + e.message + "(Apps Scriptの公開設定を確認してください)";
     errEl.classList.remove("hidden");
+  }
+}
+
+async function requestPasswordReset() {
+  const msg = document.getElementById("resetMsg");
+  msg.textContent = "送信中...";
+  msg.classList.remove("hidden");
+  try {
+    const result = await apiCall(API_URL, "sendAdminPasswordReset");
+    if (!result.ok && result.error === "too_frequent") {
+      msg.textContent = "少し前にも送信しています。1分ほど待ってからもう一度お試しください。";
+      return;
+    }
+    msg.textContent = "登録されているメールアドレスに新しいパスワードを送信しました。メールをご確認ください。";
+  } catch (e) {
+    msg.textContent = "送信に失敗しました: " + e.message;
   }
 }
 
@@ -469,6 +494,7 @@ async function renderGrid() {
     rows.innerHTML = `<div class="error" style="padding:16px;">読み込みに失敗しました: ${e.message}</div>`;
     return;
   }
+  document.getElementById("gridDateWeekday").textContent = `(${weekdayOf(date)}${currentDayData.requiredMode.isHoliday ? "祝" : ""})`;
   renderStaffingRows(currentDayData.requiredMode, currentDayData.assigned);
   renderDayModeSelect(date, currentDayData.requiredMode);
   document.getElementById("dayLaborCost").textContent = "人件費(概算): " + yen(calcLaborCost(currentDayData.assigned));
@@ -627,23 +653,28 @@ async function renderPeriod() {
   }
   document.getElementById("periodLabel").textContent = label;
 
-  const headRow = document.getElementById("periodHeadRow");
-  headRow.innerHTML = `<th>スタッフ</th>` + dates.map((d) => {
-    const wd = new Date(d + "T00:00:00").getDay();
-    const short = `${Number(d.slice(5,7))}/${Number(d.slice(8,10))}`;
-    return `<th>${short}</th>`;
-  }).join("");
-
   const body = document.getElementById("periodBody");
   body.innerHTML = `<tr><td colspan="${dates.length+1}" class="muted" style="padding:12px;">読み込み中...</td></tr>`;
 
-  let periodData;
+  let periodData, holidaysInRange;
   try {
-    periodData = await apiCall(API_URL, "getPeriodData", { startDate: dates[0], endDate: dates[dates.length-1] });
+    [periodData, holidaysInRange] = await Promise.all([
+      apiCall(API_URL, "getPeriodData", { startDate: dates[0], endDate: dates[dates.length-1] }),
+      apiCall(API_URL, "getHolidaysInRange", { startDate: dates[0], endDate: dates[dates.length-1] }),
+    ]);
   } catch (e) {
     body.innerHTML = `<tr><td colspan="${dates.length+1}" class="error" style="padding:12px;">読み込みに失敗しました: ${e.message}</td></tr>`;
     return;
   }
+  const holidaySet = new Set(holidaysInRange);
+
+  const headRow = document.getElementById("periodHeadRow");
+  headRow.innerHTML = `<th>スタッフ</th>` + dates.map((d) => {
+    const day = Number(d.slice(8, 10));
+    const wd = weekdayOf(d);
+    return `<th>${day}(${wd}${holidaySet.has(d) ? "祝" : ""})</th>`;
+  }).join("");
+
   document.getElementById("periodLaborCost").textContent = "人件費(概算): " + yen(calcLaborCost(periodData.assigned));
 
   body.innerHTML = "";
