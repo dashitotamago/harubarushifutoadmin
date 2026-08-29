@@ -258,19 +258,7 @@
 
     <!-- 設定 -->
     <div id="tab-settings" class="hidden">
-      <div class="card">
-        <h3>管理者パスワード変更</h3>
-        <label>新しいパスワード</label>
-        <input id="newAdminPw" type="password" />
-        <button onclick="changeAdminPw()">変更する</button>
-      </div>
-      <div class="card">
-        <h3>打刻端末パスコード</h3>
-        <p class="muted">店舗のiPadなど、打刻を許可する端末にだけこのパスコードを伝えてください。</p>
-        <label>パスコード</label>
-        <input id="newPasscode" />
-        <button onclick="changePasscode()">変更する</button>
-      </div>
+      <p class="muted">管理者パスワード・打刻端末パスコードの変更は、従業員管理サイトに移動しました。</p>
       <div class="card">
         <h3>シフト種別(ポジション)</h3>
         <p class="muted">シフトを時間帯ごとに色分けするための種別を登録します(例: ホール・キッチンなど)。</p>
@@ -912,21 +900,6 @@ async function deleteFromModal() {
 }
 
 /* ---- 設定 ---- */
-async function changeAdminPw() {
-  const pw = document.getElementById("newAdminPw").value;
-  if (pw.length < 4) { alert("4文字以上で設定してください"); return; }
-  await apiCall(API_URL, "setAdminPassword", { password: pw });
-  document.getElementById("newAdminPw").value = "";
-  alert("変更しました");
-}
-async function changePasscode() {
-  const code = document.getElementById("newPasscode").value;
-  if (code.trim().length < 4) { alert("4文字以上で設定してください"); return; }
-  await apiCall(API_URL, "setSetting", { key: "punchPasscode", value: code.trim() });
-  document.getElementById("newPasscode").value = "";
-  alert("変更しました");
-}
-
 /* ---- 祝日カレンダー ---- */
 let holidayList = [];
 
