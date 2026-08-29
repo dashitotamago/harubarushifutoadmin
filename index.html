@@ -230,16 +230,16 @@
       <div class="modal-box">
         <h3 id="shiftModalTitle">確定シフト</h3>
         <label>開始時刻</label>
-        <input type="time" id="modalStart" />
+        <input type="time" id="modalStart" step="900" />
         <label>終了時刻</label>
-        <input type="time" id="modalEnd" />
+        <input type="time" id="modalEnd" step="900" />
         <label style="display:flex; align-items:center; gap:6px;">
           <input type="checkbox" id="modalHasBreak" style="width:auto; margin:0;" onchange="toggleModalBreak()" /> 休憩時間を設定する
         </label>
         <div id="modalBreakRow" class="hidden">
           <div class="row">
-            <div style="flex:1"><label>休憩開始</label><input type="time" id="modalBreakStart" /></div>
-            <div style="flex:1"><label>休憩終了</label><input type="time" id="modalBreakEnd" /></div>
+            <div style="flex:1"><label>休憩開始</label><input type="time" id="modalBreakStart" step="900" /></div>
+            <div style="flex:1"><label>休憩終了</label><input type="time" id="modalBreakEnd" step="900" /></div>
           </div>
         </div>
         <label style="margin-top:6px;">ポジション分け(任意)</label>
@@ -717,7 +717,7 @@ let dragState = null;
 function pxToTimeMin(clientX, rect) {
   const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   const totalMin = GRID_START_HOUR * 60 + pct * GRID_RANGE_MIN;
-  return Math.round(totalMin / 15) * 15; // 15分刻みにスナップ
+  return Math.round(totalMin / 30) * 30; // 30分刻みにスナップ
 }
 function minToTimeStr(min) {
   const h = Math.floor(min / 60);
@@ -771,7 +771,7 @@ function attachTrackDrag(trackEl, staffId, staffName, date) {
 
     let s = Math.min(ds.startMin, ds.currentMin);
     let en = Math.max(ds.startMin, ds.currentMin);
-    if (en - s < 15) en = s + 15; // 最低15分は確保
+    if (en - s < 30) en = s + 30; // 最低30分は確保
     const start = minToTimeStr(s);
     const end = minToTimeStr(en);
     try {
@@ -837,9 +837,9 @@ function addSegRow(seg) {
   const row = document.createElement("div");
   row.className = "segrow";
   row.innerHTML = `
-    <input type="time" class="seg-start" value="${seg ? seg.start : ""}">
+    <input type="time" class="seg-start" step="900" value="${seg ? seg.start : ""}">
     <span>〜</span>
-    <input type="time" class="seg-end" value="${seg ? seg.end : ""}">
+    <input type="time" class="seg-end" step="900" value="${seg ? seg.end : ""}">
     <select class="seg-position">${positionOptionsHtml(seg ? seg.positionId : null)}</select>
     <button type="button" class="danger small" onclick="this.parentElement.remove()">×</button>
   `;
